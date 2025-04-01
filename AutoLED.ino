@@ -3,11 +3,7 @@
 #include <PubSubClient.h>
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
-
-//==== WiFi settings ====
-const char* wifi_ssids[] = { "Khoa Khoa", "Galaxy A224103" };
-const char* wifi_passwords[] = { "12345678", "khoakhoa" };
-const int wifi_count = sizeof(wifi_ssids) / sizeof(wifi_ssids[0]);
+#include <WiFiManager.h>
 
 //==== MQTT settings ====
 const char* mqtt_server = "49b6dcd6236247be8bcfe1416017e3b6.s1.eu.hivemq.cloud";
@@ -59,9 +55,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 #define PIR_PIN 13  // Chân kết nối với HC-SR501
 #define LED_PIN 12  // Chân kết nối với LED
 
-bool is_control = false; // LED có đang được điều khiển?
-bool motion = false; // trạng thái cảm biến
-bool prev_motion = false; // trạng thái cũ của cảm biến
+bool is_control = false;   // LED có đang được điều khiển?
+bool motion = false;       // trạng thái cảm biến
+bool prev_motion = false;  // trạng thái cũ của cảm biến
 
 //==== Task Handles ====
 TaskHandle_t SensorTaskHandle;
@@ -75,16 +71,16 @@ void SensorTask(void* parameter) {
       vTaskDelay(pdMS_TO_TICKS(1000));
       continue;
     } else {
-      motion = digitalRead(PIR_PIN);  // Đọc trạng thái cảm biến
-      if(motion != prev_motion) xTaskNotifyGive(NetworkTaskHandle); // Gửi tín hiệu đến NetworkTask khi cảm biến thay đổi
+      motion = digitalRead(PIR_PIN);                                  // Đọc trạng thái cảm biến
+      if (motion != prev_motion) xTaskNotifyGive(NetworkTaskHandle);  // Gửi tín hiệu đến NetworkTask khi cảm biến thay đổi
       prev_motion = motion;
 
       if (motion == HIGH) {
         digitalWrite(LED_PIN, HIGH);
-        Serial.println("Phát hiện chuyển động! LED sáng.");
+        // Serial.println("Phát hiện chuyển động! LED sáng.");
       } else {
         digitalWrite(LED_PIN, LOW);
-        Serial.println("Không có chuyển động! LED tắt.");
+        // Serial.println("Không có chuyển động! LED tắt.");
       }
 
       vTaskDelay(pdMS_TO_TICKS(1000));
@@ -98,11 +94,13 @@ void SensorTask(void* parameter) {
 void NetworkTask(void* parameter) {
   while (1) {
     if (WiFi.status() != WL_CONNECTED) {
+      is_control = false; // Tắt chế độ điều khiển qua mạng
       Serial.println("WiFi disconnected! Reconnecting...");
       connectWiFi();
     }
 
     if (!client.connected()) {
+      is_control = false; // Tắt chế độ điều khiển qua mạng
       Serial.println("MQTT disconnected! Reconnecting...");
       reconnect();
     }
@@ -119,29 +117,37 @@ void NetworkTask(void* parameter) {
 
 //==== Kết nối WiFi ====
 void connectWiFi() {
-  WiFi.mode(WIFI_STA);
+  WiFiManager wm;
+  Serial.println("🔄 Đang kết nối WiFi...");
+  wm.setConfigPortalTimeout(10);  // ⏳ Giới hạn AP trong 10 giây
 
-  for (int i = 0; i < wifi_count; i++) {
-    Serial.print("Connecting to SSID: ");
-    Serial.println(wifi_ssids[i]);
-
-    WiFi.begin(wifi_ssids[i], wifi_passwords[i]);
-
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 10) {
-      vTaskDelay(pdMS_TO_TICKS(1000));
+  if (WiFi.SSID() != "") {  
+    // 🔹 Nếu đã có WiFi lưu sẵn, thử kết nối lại
+    WiFi.begin();
+    int retry_count = 0;
+    while (WiFi.status() != WL_CONNECTED && retry_count < 15) {  
       Serial.print(".");
-      attempts++;
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      retry_count++;
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\nConnected to " + String(wifi_ssids[i]));
-      Serial.print("IP Address: ");
+      Serial.println("\n✅ WiFi đã kết nối lại!");
+      Serial.print("📶 Địa chỉ IP: ");
       Serial.println(WiFi.localIP());
       return;
     } else {
-      Serial.println("\nFailed to connect to " + String(wifi_ssids[i]));
+      Serial.println("\n⚠️ Không kết nối lại được, chuyển sang chế độ AP.");
     }
+  }
+
+  // 🔹 Nếu chưa có WiFi hoặc không kết nối lại được, vào chế độ cấu hình AP
+  if (!wm.autoConnect("AutoLED_Config")) {  
+    Serial.println("❌ Không thể kết nối WiFi, tiếp tục chạy chương trình...");
+  } else {
+    Serial.println("✅ WiFi đã kết nối qua AP Config!");
+    Serial.print("📶 Địa chỉ IP: ");
+    Serial.println(WiFi.localIP());
   }
 }
 
