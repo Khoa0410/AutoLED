@@ -4,19 +4,20 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 #include <WiFiManager.h>
+#include <Preferences.h>
 
 //==== MQTT settings ====
 const char* mqtt_server = "49b6dcd6236247be8bcfe1416017e3b6.s1.eu.hivemq.cloud";
 const char* mqtt_username = "group15_iot";
 const char* mqtt_password = "Group15@iot";
 const int mqtt_port = 8883;
-const char* id = "67e31110a0e08c0712e1db36";
+char id[40] = "67e31110a0e08c0712e1db36";
 
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
 unsigned long lastMsg = 0;
-const char* topic = "LED";
-const char* re_topic = "LED/receive";
+char topic[40] = "LED";
+char re_topic[40] = "LED/receive";
 static const char* root_ca PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----
 MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
@@ -63,6 +64,27 @@ bool prev_motion = false;  // trạng thái cũ của cảm biến
 TaskHandle_t SensorTaskHandle;
 TaskHandle_t NetworkTaskHandle;
 
+// input field cho id, topic trong WiFi Manager
+WiFiManagerParameter custom_id("device_id", "Device ID", id, 40);
+WiFiManagerParameter custom_topic("mqtt_topic", "MQTT Topic", topic, 40);
+WiFiManagerParameter custom_retopic("mqtt_retopic", "MQTT Receive Topic", re_topic, 40);
+
+Preferences preferences;
+void saveConfigToEEPROM(const char* id, const char* topic, const char* re_topic) {
+    preferences.begin("config", false);
+    preferences.putString("device_id", id);
+    preferences.putString("mqtt_topic", topic);
+    preferences.putString("mqtt_retopic", re_topic);
+    preferences.end();
+}
+
+void loadConfigFromEEPROM() {
+    preferences.begin("config", true);
+    strcpy(id, preferences.getString("device_id", "67e31110a0e08c0712e1db36").c_str());  // Nếu chưa có giá trị, dùng mặc định
+    strcpy(topic, preferences.getString("mqtt_topic", "LED").c_str());
+    strcpy(re_topic, preferences.getString("mqtt_retopic", "LED/receive").c_str());
+    preferences.end();
+}
 
 //==== Điều khiển LED và cảm biến ====
 void SensorTask(void* parameter) {
@@ -119,7 +141,12 @@ void NetworkTask(void* parameter) {
 void connectWiFi() {
   WiFiManager wm;
   Serial.println("🔄 Đang kết nối WiFi...");
-  wm.setConfigPortalTimeout(10);  // ⏳ Giới hạn AP trong 10 giây
+  wm.setConfigPortalTimeout(60);  // ⏳ Giới hạn AP trong 10 giây
+
+  // Thêm các tham số vào WiFiManager
+  wm.addParameter(&custom_id);
+  wm.addParameter(&custom_topic);
+  wm.addParameter(&custom_retopic);
 
   if (WiFi.SSID() != "") {  
     // 🔹 Nếu đã có WiFi lưu sẵn, thử kết nối lại
@@ -148,6 +175,9 @@ void connectWiFi() {
     Serial.println("✅ WiFi đã kết nối qua AP Config!");
     Serial.print("📶 Địa chỉ IP: ");
     Serial.println(WiFi.localIP());
+
+    // Lưu cấu hình sau khi người dùng nhập dữ liệu mới
+    saveConfigToEEPROM(custom_id.getValue(), custom_topic.getValue(), custom_retopic.getValue());
   }
 }
 
@@ -245,6 +275,9 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
   Serial.begin(115200);
   Serial.println("Serial connected");
+
+  // Đọc cấu hình đã lưu trong EEPROM
+  loadConfigFromEEPROM();
 
   connectWiFi();
   espClient.setCACert(root_ca);
