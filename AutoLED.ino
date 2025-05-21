@@ -11,13 +11,13 @@ const char* mqtt_server = "49b6dcd6236247be8bcfe1416017e3b6.s1.eu.hivemq.cloud";
 const char* mqtt_username = "group15_iot";
 const char* mqtt_password = "Group15@iot";
 const int mqtt_port = 8883;
-char id[40] = "67e31110a0e08c0712e1db36";
+char id[40] = "";
 
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
 unsigned long lastMsg = 0;
-char topic[40] = "LED";
-char re_topic[40] = "LED/receive";
+char topic[40] = "";
+char re_topic[40] = "";
 static const char* root_ca PROGMEM = R"EOF(
 -----BEGIN CERTIFICATE-----
 MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
@@ -53,8 +53,9 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 )EOF";
 
 // GPIO setting
-#define PIR_PIN 13  // Chân kết nối với HC-SR501
-#define LED_PIN 12  // Chân kết nối với LED
+#define PIR_PIN 13     // Chân kết nối với HC-SR501
+#define LED_PIN 12     // Chân kết nối với LED
+#define BUTTON_PIN 15  // Chân kết nối với BUTTON
 
 bool is_control = false;   // LED có đang được điều khiển?
 bool motion = false;       // trạng thái cảm biến
@@ -64,26 +65,39 @@ bool prev_motion = false;  // trạng thái cũ của cảm biến
 TaskHandle_t SensorTaskHandle;
 TaskHandle_t NetworkTaskHandle;
 
-// input field cho id, topic trong WiFi Manager
-WiFiManagerParameter custom_id("device_id", "Device ID", id, 40);
-WiFiManagerParameter custom_topic("mqtt_topic", "MQTT Topic", topic, 40);
-WiFiManagerParameter custom_retopic("mqtt_retopic", "MQTT Receive Topic", re_topic, 40);
-
 Preferences preferences;
 void saveConfigToEEPROM(const char* id, const char* topic, const char* re_topic) {
-    preferences.begin("config", false);
-    preferences.putString("device_id", id);
-    preferences.putString("mqtt_topic", topic);
-    preferences.putString("mqtt_retopic", re_topic);
-    preferences.end();
+  preferences.begin("config", false);
+  preferences.putString("device_id", id);
+  preferences.putString("mqtt_topic", topic);
+  preferences.putString("mqtt_retopic", re_topic);
+  preferences.end();
+
+  // Debug
+  Serial.println("[EEPROM] Saved config:");
+  Serial.print("  ID: ");
+  Serial.println(id);
+  Serial.print("  Topic: ");
+  Serial.println(topic);
+  Serial.print("  Re-topic: ");
+  Serial.println(re_topic);
 }
 
 void loadConfigFromEEPROM() {
-    preferences.begin("config", true);
-    strcpy(id, preferences.getString("device_id", "67e31110a0e08c0712e1db36").c_str());  // Nếu chưa có giá trị, dùng mặc định
-    strcpy(topic, preferences.getString("mqtt_topic", "LED").c_str());
-    strcpy(re_topic, preferences.getString("mqtt_retopic", "LED/receive").c_str());
-    preferences.end();
+  preferences.begin("config", true);
+  strcpy(id, preferences.getString("device_id", "").c_str());  // Nếu chưa có giá trị, dùng mặc định
+  strcpy(topic, preferences.getString("mqtt_topic", "").c_str());
+  strcpy(re_topic, preferences.getString("mqtt_retopic", "").c_str());
+  preferences.end();
+
+  // Debug
+  Serial.println("[EEPROM] Loaded config:");
+  Serial.print("  ID: ");
+  Serial.println(id);
+  Serial.print("  Topic: ");
+  Serial.println(topic);
+  Serial.print("  Re-topic: ");
+  Serial.println(re_topic);
 }
 
 //==== Điều khiển LED và cảm biến ====
@@ -115,14 +129,19 @@ void SensorTask(void* parameter) {
 //==== Duy trì kết nối WiFi và MQTT ====
 void NetworkTask(void* parameter) {
   while (1) {
+    // 🔹 Bấm nút để vào AP Mode
+    if (digitalRead(BUTTON_PIN) == LOW)
+      enableAPMode();
+
+    // Tự động kết nối WiFi và MQTT
     if (WiFi.status() != WL_CONNECTED) {
-      is_control = false; // Tắt chế độ điều khiển qua mạng
+      is_control = false;  // Tắt chế độ điều khiển qua mạng
       Serial.println("WiFi disconnected! Reconnecting...");
       connectWiFi();
     }
 
     if (!client.connected()) {
-      is_control = false; // Tắt chế độ điều khiển qua mạng
+      is_control = false;  // Tắt chế độ điều khiển qua mạng
       Serial.println("MQTT disconnected! Reconnecting...");
       reconnect();
     }
@@ -139,50 +158,74 @@ void NetworkTask(void* parameter) {
 
 //==== Kết nối WiFi ====
 void connectWiFi() {
+  Serial.println("Đang kết nối WiFi...");
+
+  // Nếu đã có WiFi lưu sẵn, thử kết nối lại
+  WiFi.begin();
+  int retry_count = 0;
+  while (WiFi.status() != WL_CONNECTED && retry_count < 10) {
+    Serial.print(".");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    retry_count++;
+  }
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi đã kết nối lại!");
+    Serial.print("Địa chỉ IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("\nKhông kết nối lại được với WiFi, thiết bị hoạt động không có mạng.");
+  }
+}
+
+//==== Vào AP Mode ====
+void enableAPMode() {
+  WiFi.disconnect(true);  // Ngắt kết nối WiFi để vào AP Mode
+  vTaskDelay(pdMS_TO_TICKS(100));
+
+  WiFi.mode(WIFI_AP);  // Vào AP Mode
   WiFiManager wm;
-  Serial.println("🔄 Đang kết nối WiFi...");
-  wm.setConfigPortalTimeout(60);  // ⏳ Giới hạn AP trong 10 giây
+  wm.setConfigPortalTimeout(120);  // Giới hạn AP trong 120 giây
+
+  loadConfigFromEEPROM();  // Load config hiện tại
+
+  // input field cho id, topic trong WiFi Manager
+  WiFiManagerParameter custom_id("device_id", "Device ID", id, 40);
+  WiFiManagerParameter custom_topic("mqtt_topic", "MQTT Topic", topic, 40);
+  WiFiManagerParameter custom_retopic("mqtt_retopic", "MQTT Receive Topic", re_topic, 40);
 
   // Thêm các tham số vào WiFiManager
   wm.addParameter(&custom_id);
   wm.addParameter(&custom_topic);
   wm.addParameter(&custom_retopic);
 
-  if (WiFi.SSID() != "") {  
-    // 🔹 Nếu đã có WiFi lưu sẵn, thử kết nối lại
-    WiFi.begin();
-    int retry_count = 0;
-    while (WiFi.status() != WL_CONNECTED && retry_count < 15) {  
-      Serial.print(".");
-      vTaskDelay(pdMS_TO_TICKS(1000));
-      retry_count++;
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.println("\n✅ WiFi đã kết nối lại!");
-      Serial.print("📶 Địa chỉ IP: ");
-      Serial.println(WiFi.localIP());
-      return;
-    } else {
-      Serial.println("\n⚠️ Không kết nối lại được, chuyển sang chế độ AP.");
-    }
-  }
-
-  // 🔹 Nếu chưa có WiFi hoặc không kết nối lại được, vào chế độ cấu hình AP
-  if (!wm.autoConnect("AutoLED_Config")) {  
-    Serial.println("❌ Không thể kết nối WiFi, tiếp tục chạy chương trình...");
-  } else {
-    Serial.println("✅ WiFi đã kết nối qua AP Config!");
-    Serial.print("📶 Địa chỉ IP: ");
+  if (wm.startConfigPortal("AutoLED_Config")) {
+    Serial.println("Cấu hình thành công!");
+    Serial.print("Địa chỉ IP: ");
     Serial.println(WiFi.localIP());
 
     // Lưu cấu hình sau khi người dùng nhập dữ liệu mới
     saveConfigToEEPROM(custom_id.getValue(), custom_topic.getValue(), custom_retopic.getValue());
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    loadConfigFromEEPROM();
+
+    // Tắt AP sau cấu hình
+    if (WiFi.status() == WL_CONNECTED) {
+      WiFi.softAPdisconnect(true);
+      Serial.println("Tắt AP sau khi cấu hình xong.");
+    }
+  } else {
+    Serial.println("Hết thời gian cấu hình hoặc không kết nối được!");
   }
 }
 
 //==== Kết nối MQTT ====
 void reconnect() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Không có WiFi, không thể kết nối MQTT.");
+    return;
+  }
+
   int attempts = 0;
   while (!client.connected() && attempts < 10) {
     Serial.print("Connecting to MQTT...");
@@ -272,6 +315,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 void setup() {
   pinMode(PIR_PIN, INPUT);  // Chân cảm biến là INPUT
   pinMode(LED_PIN, OUTPUT);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
   digitalWrite(LED_PIN, LOW);
   Serial.begin(115200);
   Serial.println("Serial connected");
@@ -290,7 +334,7 @@ void setup() {
   xTaskCreatePinnedToCore(SensorTask, "SensorTask", 4096, NULL, 1, &SensorTaskHandle, 0);
 
   // Khởi tạo Task mạng trên Core 1
-  xTaskCreatePinnedToCore(NetworkTask, "NetworkTask", 4096, NULL, 1, &NetworkTaskHandle, 1);
+  xTaskCreatePinnedToCore(NetworkTask, "NetworkTask", 8192, NULL, 1, &NetworkTaskHandle, 1);
 }
 
 void loop() {
