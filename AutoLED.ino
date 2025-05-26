@@ -8,8 +8,8 @@
 
 //==== MQTT settings ====
 const char* mqtt_server = "49b6dcd6236247be8bcfe1416017e3b6.s1.eu.hivemq.cloud";
-const char* mqtt_username = "group15_iot";
-const char* mqtt_password = "Group15@iot";
+const char* mqtt_username = "IoTPlatform";
+const char* mqtt_password = "IoT@Platform_215599";
 const int mqtt_port = 8883;
 char id[40] = "";
 
@@ -118,8 +118,6 @@ void SensorTask(void* parameter) {
         digitalWrite(LED_PIN, LOW);
         // Serial.println("Không có chuyển động! LED tắt.");
       }
-
-      vTaskDelay(pdMS_TO_TICKS(1000));
     }
 
     vTaskDelay(pdMS_TO_TICKS(500));
@@ -165,7 +163,7 @@ void connectWiFi() {
   int retry_count = 0;
   while (WiFi.status() != WL_CONNECTED && retry_count < 10) {
     Serial.print(".");
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    vTaskDelay(pdMS_TO_TICKS(500));
     retry_count++;
   }
 
@@ -238,7 +236,7 @@ void reconnect() {
     } else {
       Serial.print("Failed, rc=");
       Serial.println(client.state());
-      vTaskDelay(pdMS_TO_TICKS(1000));
+      vTaskDelay(pdMS_TO_TICKS(500));
     }
     attempts++;
   }
