@@ -5,6 +5,7 @@
 #include <ArduinoJson.h>
 #include <WiFiManager.h>
 #include <Preferences.h>
+#include <ESP32Ping.h>
 
 //==== MQTT settings ====
 const char* mqtt_server = "49b6dcd6236247be8bcfe1416017e3b6.s1.eu.hivemq.cloud";
@@ -160,11 +161,11 @@ void connectWiFi() {
 
   // Nếu đã có WiFi lưu sẵn, thử kết nối lại
   WiFi.begin();
-  int retry_count = 0;
-  while (WiFi.status() != WL_CONNECTED && retry_count < 10) {
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 5) {
     Serial.print(".");
     vTaskDelay(pdMS_TO_TICKS(500));
-    retry_count++;
+    attempts++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -173,6 +174,20 @@ void connectWiFi() {
     Serial.println(WiFi.localIP());
   } else {
     Serial.println("\nKhông kết nối lại được với WiFi, thiết bị hoạt động không có mạng.");
+  }
+}
+
+// Check Internet access for WiFi
+bool checkInternet() {
+  Serial.println("Checking Internet access by pinging 8.8.8.8...");
+  bool success = Ping.ping(IPAddress(8, 8, 8, 8), 3); // Ping 3 lần đến Google DNS
+
+  if (success) {
+    Serial.println("Internet access confirmed");
+    return true;
+  } else {
+    Serial.println("No Internet access");
+    return false;
   }
 }
 
@@ -224,8 +239,13 @@ void reconnect() {
     return;
   }
 
+  if(!checkInternet()) {
+    Serial.println("WiFi không có kết nối mạng. Không thể kết nối MQTT");
+    return;
+  }
+
   int attempts = 0;
-  while (!client.connected() && attempts < 10) {
+  while (!client.connected() && attempts < 5) {
     Serial.print("Connecting to MQTT...");
     String clientId = "ESP32Client-" + String(random(0xffff), HEX);
 
