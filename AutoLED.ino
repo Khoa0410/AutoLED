@@ -61,6 +61,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 bool is_control = false;   // LED có đang được điều khiển?
 bool motion = false;       // trạng thái cảm biến
 bool prev_motion = false;  // trạng thái cũ của cảm biến
+bool is_enable_ap = false;
 
 //==== Task Handles ====
 TaskHandle_t SensorTaskHandle;
@@ -104,20 +105,28 @@ void loadConfigFromEEPROM() {
 //==== Điều khiển LED và cảm biến ====
 void SensorTask(void* parameter) {
   while (1) {
+    // 🔹 Bấm nút để vào AP Mode
+    if (digitalRead(BUTTON_PIN) == LOW) {
+      is_enable_ap = true;
+      xTaskNotifyGive(NetworkTaskHandle);  // Gửi tín hiệu đến NetworkTask để vào AP Mode
+    } else is_enable_ap = false;
+
     if (is_control) {
       vTaskDelay(pdMS_TO_TICKS(1000));
       continue;
     } else {
-      motion = digitalRead(PIR_PIN);                                  // Đọc trạng thái cảm biến
-      if (motion != prev_motion) xTaskNotifyGive(NetworkTaskHandle);  // Gửi tín hiệu đến NetworkTask khi cảm biến thay đổi
+      motion = digitalRead(PIR_PIN);  // Đọc trạng thái cảm biến
+      if (motion != prev_motion) {
+        xTaskNotifyGive(NetworkTaskHandle);  // Gửi tín hiệu đến NetworkTask khi cảm biến thay đổi
+        if (motion == HIGH) Serial.println("Phát hiện chuyển động! Bật RELAY.");
+        else Serial.println("Không có chuyển động! Tắt RELAY.");
+      }
       prev_motion = motion;
 
       if (motion == HIGH) {
         digitalWrite(LED_PIN, HIGH);
-        // Serial.println("Phát hiện chuyển động! LED sáng.");
       } else {
         digitalWrite(LED_PIN, LOW);
-        // Serial.println("Không có chuyển động! LED tắt.");
       }
     }
 
@@ -128,10 +137,6 @@ void SensorTask(void* parameter) {
 //==== Duy trì kết nối WiFi và MQTT ====
 void NetworkTask(void* parameter) {
   while (1) {
-    // 🔹 Bấm nút để vào AP Mode
-    if (digitalRead(BUTTON_PIN) == LOW)
-      enableAPMode();
-
     // Tự động kết nối WiFi và MQTT
     if (WiFi.status() != WL_CONNECTED) {
       is_control = false;  // Tắt chế độ điều khiển qua mạng
@@ -146,9 +151,12 @@ void NetworkTask(void* parameter) {
     }
     client.loop();
 
-    // Nếu nhận tín hiệu từ SensorTask, gửi MQTT
+    // Xử lý nhận tín hiệu từ SensorTask
     if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(1000))) {
-      publishMessage(topic, true);
+      if (is_enable_ap)
+        enableAPMode();
+      else
+        publishMessage(topic, true);
     }
 
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -180,7 +188,7 @@ void connectWiFi() {
 // Check Internet access for WiFi
 bool checkInternet() {
   Serial.println("Checking Internet access by pinging 8.8.8.8...");
-  bool success = Ping.ping(IPAddress(8, 8, 8, 8), 3); // Ping 3 lần đến Google DNS
+  bool success = Ping.ping(IPAddress(8, 8, 8, 8), 3);  // Ping 3 lần đến Google DNS
 
   if (success) {
     Serial.println("Internet access confirmed");
@@ -239,7 +247,7 @@ void reconnect() {
     return;
   }
 
-  if(!checkInternet()) {
+  if (!checkInternet()) {
     Serial.println("WiFi không có kết nối mạng. Không thể kết nối MQTT");
     return;
   }
@@ -273,13 +281,13 @@ void publishMessage(const char* topic, boolean retained) {
   serializeJson(jsonDoc, jsonBuffer);
 
   int attempts = 0;
-  while (attempts < 10) {
+  while (attempts < 5) {
     if (client.publish(topic, jsonBuffer, retained)) {
       Serial.println("Message published [" + String(topic) + "]: " + String(jsonBuffer));
       return;
     } else {
       attempts++;
-      vTaskDelay(pdMS_TO_TICKS(1000));
+      vTaskDelay(pdMS_TO_TICKS(500));
     }
   }
   Serial.println("Failed to publish message");
@@ -331,7 +339,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 }
 
 void setup() {
-  pinMode(PIR_PIN, INPUT);  // Chân cảm biến là INPUT
+  pinMode(PIR_PIN, INPUT_PULLDOWN);
   pinMode(LED_PIN, OUTPUT);
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   digitalWrite(LED_PIN, LOW);
